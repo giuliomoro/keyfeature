@@ -2,11 +2,11 @@
 #include <Keys.h>
 #include <algorithm>
 #include <cmath>
- float gKey;
- float gPos;
- float gGate;
- float gPerc;
- float gAux;
+extern float gKey;
+extern float gPos;
+extern float gGate;
+extern float gPerc;
+extern float gAux;
 
 #define SCOPE
 #define SCANNER
@@ -70,11 +70,11 @@ std::vector<std::vector<float>> gInputDelayBuffers;
 #endif /* PIEZOS */
 
 #ifdef SCANNER
-void Bela_userSettings(BelaInitSettings* settings)
+void Bela_userSettings2(BelaInitSettings* settings)
 {
 	settings->pruNumber = 0;	
 	settings->useDigital = 0;
-	printf("BEla_)user settings\n");
+	printf("Bela__user_settings2\n");
 }
 
 #ifndef LOG_KEYS_AUDIO
@@ -213,7 +213,7 @@ void postCallback(void* arg, float* buffer, unsigned int length){
 #undef LOG_KEYS_AUDIO
 #endif /* SCANNER */
 
-bool setup(BelaContext *context, void *userData)
+bool setup2(BelaContext *context, void *userData)
 {
 	printf("Setup2\n");
 #ifdef SCOPE
@@ -293,7 +293,7 @@ bool setup(BelaContext *context, void *userData)
 
 unsigned int gSampleCount = 0;
 
-void render(BelaContext *context, void *userData)
+void render2(BelaContext *context, void *userData)
 {
 	for(unsigned int n = 0; n < context->audioFrames; ++n)
 	{
@@ -330,7 +330,7 @@ void render(BelaContext *context, void *userData)
 	}
 }
 
-void cleanup(BelaContext *context, void *userData)
+void cleanup2(BelaContext *context, void *userData)
 {
 #ifdef SCANNER
 	delete keys;
