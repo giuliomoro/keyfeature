@@ -2,6 +2,7 @@
 #include <Keys.h>
 #include <algorithm>
 #include <cmath>
+#include "KeyboardState.h"
 extern float gKey;
 extern float gPos;
 extern float gGate;
@@ -36,6 +37,8 @@ KeyFeature keyFeature;
 #endif /* FEATURE */
 #ifdef KEYPOSITIONTRACKER
 #include "KeyPositionTracker.h"
+#include "KeyboardState.h"
+KeyboardState keyboardState;
 KeyBuffers keyBuffers;
 std::vector<KeyBuffer> keyBuffer;
 std::vector<KeyPositionTracker> keyPositionTrackers;
@@ -86,18 +89,61 @@ void postCallback(void* arg, float* buffer, unsigned int length){
 #endif /* FEATURE */
 #ifdef KEYPOSITIONTRACKER
 	{
+		for(unsigned int n = 0; n < length; ++n)
+		{
+			// INVERTING INPUTS
+			buffer[n] = 1.f - buffer[n];
+		}
 		static int count;
 		keyBuffers.postCallback(buffer, length);
 		for(unsigned int n = 0; n < length; ++n)
 		{
-			if(n >= 45 && n < 82)
+			if(n >= gKeyOffset && n < gKeyOffset + gNumKeys + 1)
 			{
-				if(n == key)
-					keyPositionTrackers[n].triggerReceived(count);
+				keyPositionTrackers[n].triggerReceived(count);
 			}
 		}
 		count++;
 	}
+	keyboardState.render(buffer, keyPositionTrackers, 35, 81);
+	gKey = keyboardState.getKey() - gKeyOffset + keyboardState.getBend();
+	gPos = keyboardState.getPosition();
+	float newPerc = keyboardState.getPercussiveness();
+	gPerc = newPerc ? newPerc : gPerc * 0.99f;
+	gPerc = newPerc;
+	static float lastPerc = 0;
+	lastPerc = newPerc ? newPerc : lastPerc;
+	static float prevPos = 0;
+	scope.log(
+			buffer[key],
+			//(gKey - key + gKeyOffset) / 8.f,
+			gPos - prevPos,
+			keyPositionTrackers[key].dynamicOnsetThreshold_,
+			keyPositionTrackers[key].currentState() / (float) kPositionTrackerStateReleaseFinished,
+			gPerc);
+	prevPos = gPos;
+	if(gPos < 0.13)
+		gPos = 0;
+	//printing
+	{
+		static int count = 0;
+		count++;
+		if(count == 100 && 0)
+		{
+			rt_printf("perc: %6.4f, bend: %6.3f (%3d at %6.3f %50s), key: %3d, %6.3f, %s\n",
+					lastPerc,
+					keyboardState.getBend(),
+					keyboardState.getOtherKey(),
+					keyboardState.getOtherPosition(),
+					statesDesc[keyPositionTrackers[keyboardState.getOtherKey()].currentState()].c_str(),
+					keyboardState.getKey(),
+					keyboardState.getPosition(),
+					statesDesc[keyPositionTrackers[keyboardState.getKey()].currentState()].c_str()
+				 );
+			count = 0;
+		}
+	}
+	return;
 #endif /* KEYPOSITIONTRACKER */
 	
 	static float oldVal;
@@ -124,7 +170,7 @@ void postCallback(void* arg, float* buffer, unsigned int length){
 	feature2 = feature2 < 0 ? 0 : feature2;
 #endif /* KEYPOSITIONTRACKER */
 #ifdef SCOPE
-	scope.log(1.f-val, feature, feature2, -feature3);
+	scope.log(1.f-val, feature, feature2, feature3, keyPositionTrackers[key].dynamicOnsetThreshold_);
 #endif /* SCOPE */
 	float* start = buffer + gKeyOffset;
 	float* min = std::min_element(start, start + gNumKeys);
@@ -220,7 +266,7 @@ bool setup2(BelaContext *context, void *userData)
 #ifdef LOG_KEYS_AUDIO
 	scope.setup(4, context->audioSampleRate);
 #else /* LOG_KEYS_AUDIO */
-	scope.setup(4, 1000);
+	scope.setup(5, 1000);
 #endif /* LOG_KEYS_AUDIO */
 #endif /* SCOPE */
 #ifdef LOWPASS_PIEZOS
@@ -274,6 +320,7 @@ bool setup2(BelaContext *context, void *userData)
 				);
 		keyPositionTrackers.back().engage();
 	}
+	keyboardState.setup(numKeys);
 #endif /* KEYPOSITIONTRACKER */
 #ifndef LOG_KEYS_AUDIO
 	keys->setPostCallback(postCallback, keys);
@@ -295,6 +342,7 @@ unsigned int gSampleCount = 0;
 
 void render2(BelaContext *context, void *userData)
 {
+	float phaseStep = 2.f * (float) M_PI * powf(2, gKey/12.f) * 233.082f / context->audioSampleRate;
 	for(unsigned int n = 0; n < context->audioFrames; ++n)
 	{
 		++gSampleCount;
@@ -327,6 +375,19 @@ void render2(BelaContext *context, void *userData)
 #endif /* SCANNER && PIEZOS */
 #endif /* SCOPE */
 		}
+		static float phase = 0;
+		static float amp = 0;
+		float ampSmooth = 0.995;
+		amp = amp * ampSmooth - gPos * (1.f - ampSmooth);
+		static int count = 0;
+		phase += phaseStep;
+		if(phase >= M_PI)
+			phase -= 2.f * (float) M_PI;
+		float out = sinf_neon(phase) * amp * amp *  0.7f + gPerc * random()/(float)RAND_MAX;
+		for(unsigned int ch = 0; ch < context->audioOutChannels; ++ch)
+		{
+			audioWrite(context, n, ch, out);
+		}
 	}
 }
 
@@ -335,8 +396,5 @@ void cleanup2(BelaContext *context, void *userData)
 #ifdef SCANNER
 	delete keys;
 #endif /* SCANNER */
-#ifdef SCOPE
-	// delete scope;
-#endif /* SCOPE */
 
 }
