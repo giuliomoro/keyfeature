@@ -2,6 +2,7 @@
 #include <Keys.h>
 #include <algorithm>
 #include <cmath>
+#include <math_neon.h>
 #include "KeyboardState.h"
 extern float gKey;
 extern float gPos;
@@ -72,6 +73,7 @@ std::vector<std::vector<float>> gInputDelayBuffers;
 #undef DELAY_INPUTS
 #endif /* PIEZOS */
 
+//#define SINGLE_KEY
 #ifdef SCANNER
 void Bela_userSettings2(BelaInitSettings* settings)
 {
@@ -83,44 +85,60 @@ void Bela_userSettings2(BelaInitSettings* settings)
 #ifndef LOG_KEYS_AUDIO
 void postCallback(void* arg, float* buffer, unsigned int length){
 	Keys* keys = (Keys*)arg;
-	unsigned int key = gKeyOffset + 13;
+	int firstKey = gKeyOffset;
+	int lastKey = gKeyOffset + gNumKeys + 1;
+	unsigned int key = 46;
 #ifdef FEATURE
 	KeyFeature::postCallback((void*)&keyFeature, buffer, length);
 #endif /* FEATURE */
 #ifdef KEYPOSITIONTRACKER
+	static int count;
 	{
 		for(unsigned int n = 0; n < length; ++n)
 		{
 			// INVERTING INPUTS
 			buffer[n] = 1.f - buffer[n];
 		}
-		static int count;
 		keyBuffers.postCallback(buffer, length);
 		for(unsigned int n = 0; n < length; ++n)
 		{
-			if(n >= gKeyOffset && n < gKeyOffset + gNumKeys + 1)
+			if(n >= firstKey && n < lastKey)
 			{
-				keyPositionTrackers[n].triggerReceived(count);
+#ifdef SINGLE_KEY
+				if(n == key)
+#endif /* SINGLE_KEY */
+				keyPositionTrackers[n].triggerReceived(count / 1000.f);
 			}
 		}
 		count++;
 	}
-	keyboardState.render(buffer, keyPositionTrackers, 35, 81);
+	keyboardState.render(buffer, keyPositionTrackers, firstKey, lastKey);
 	gKey = keyboardState.getKey() - gKeyOffset + keyboardState.getBend();
 	gPos = keyboardState.getPosition();
-	float newPerc = keyboardState.getPercussiveness();
-	gPerc = newPerc ? newPerc : gPerc * 0.99f;
-	gPerc = newPerc;
 	static float lastPerc = 0;
-	lastPerc = newPerc ? newPerc : lastPerc;
+	float newPerc = keyboardState.getPercussiveness();
+	if(newPerc != lastPerc && newPerc)
+	{
+		gPerc = newPerc;/// keyboardState.avVel;
+		gPerc *= 10.f;
+		gPerc *= gPerc;
+		rt_printf("%d]oldPerc: %f, newPerc: %f\n", count, newPerc, gPerc);
+	}
+	gPerc *= 0.99f;
+	lastPerc = newPerc;
 	static float prevPos = 0;
+#ifndef SINGLE_KEY
 	scope.log(
-			buffer[key],
+			buffer[keyboardState.getKey()],
 			//(gKey - key + gKeyOffset) / 8.f,
 			gPos - prevPos,
-			keyPositionTrackers[key].dynamicOnsetThreshold_,
+			//keyPositionTrackers[key].dynamicOnsetThreshold_,
+			//newPerc,
 			keyPositionTrackers[key].currentState() / (float) kPositionTrackerStateReleaseFinished,
-			gPerc);
+			0,
+			0
+			);
+#endif /* SINGLE_KEY */
 	prevPos = gPos;
 	if(gPos < 0.13)
 		gPos = 0;
@@ -128,10 +146,17 @@ void postCallback(void* arg, float* buffer, unsigned int length){
 	{
 		static int count = 0;
 		count++;
-		if(count == 100 && 0)
+		int newKey = keyboardState.getKey();
+		int newOtherKey = keyboardState.getOtherKey();
+		static int oldKey = 0;
+		static int oldOtherKey = 0;
+		if( (newKey != oldKey && newKey != 0)
+&& (newOtherKey != oldOtherKey && newOtherKey != 0)
+				)
 		{
+			if(1)
 			rt_printf("perc: %6.4f, bend: %6.3f (%3d at %6.3f %50s), key: %3d, %6.3f, %s\n",
-					lastPerc,
+					gPerc,
 					keyboardState.getBend(),
 					keyboardState.getOtherKey(),
 					keyboardState.getOtherPosition(),
@@ -142,6 +167,8 @@ void postCallback(void* arg, float* buffer, unsigned int length){
 				 );
 			count = 0;
 		}
+		oldKey = newKey;
+		oldOtherKey = newOtherKey;
 	}
 	return;
 #endif /* KEYPOSITIONTRACKER */
@@ -244,7 +271,6 @@ void postCallback(void* arg, float* buffer, unsigned int length){
 	if(gGate)
 		gKey = keyFloat - gKeyOffset;
 
-	static int count = 0;
 	if(count++ == 100)
 	{
 		rt_printf("gKey: %5.2f, gPos: %.2f, gPerc: %.2f, gAux: %.3f, gGate: %.1f\n", gKey, gPos, gPerc, gAux, gGate);
@@ -266,7 +292,7 @@ bool setup2(BelaContext *context, void *userData)
 #ifdef LOG_KEYS_AUDIO
 	scope.setup(4, context->audioSampleRate);
 #else /* LOG_KEYS_AUDIO */
-	scope.setup(5, 1000);
+	scope.setup(8, 1000);
 #endif /* LOG_KEYS_AUDIO */
 #endif /* SCOPE */
 #ifdef LOWPASS_PIEZOS
@@ -383,6 +409,7 @@ void render2(BelaContext *context, void *userData)
 		phase += phaseStep;
 		if(phase >= M_PI)
 			phase -= 2.f * (float) M_PI;
+		//amp = 0;
 		float out = sinf_neon(phase) * amp * amp *  0.7f + gPerc * random()/(float)RAND_MAX;
 		for(unsigned int ch = 0; ch < context->audioOutChannels; ++ch)
 		{
